@@ -22,13 +22,13 @@ func (self *stack[T]) append(item T) {
 	*self = append(*self, item)
 }
 
-func ParseExpression(tokens []string, varScope *varScope, funcScope *funcScope) float32 {
+func ParseExpression(tokens Tokens, varScope *varScope, funcScope *funcScope) float32 {
 	var queue []any
 	{
 		var stack stack[string]
 
-		for i, token := range tokens {
-			asFloat, isNum := strconv.ParseFloat(token, 32)
+		for i, token := range tokens.tokens {
+			asFloat, isntNum := strconv.ParseFloat(token, 32)
 			switch {
 			case token == "(":
 				stack.append(token)
@@ -46,13 +46,13 @@ func ParseExpression(tokens []string, varScope *varScope, funcScope *funcScope) 
 					l = len(stack)
 				}
 				stack.append(token)
-			case isNum == nil:
+			case isntNum == nil:
 				queue = append(queue, float32(asFloat))
 			default:
 				if value, ok := (*varScope)[token]; ok {
 					queue = append(queue, value)
 				} else if _, ok := (*funcScope)[token]; ok {
-					queue = append(queue, FuncCall(tokens[i:], varScope, funcScope))
+					queue = append(queue, FuncCall(tokens.Slice(i, -1), varScope, funcScope))
 				}
 			}
 		}

@@ -11,14 +11,20 @@ var (
 	globalFuncs = make(funcScope)
 )
 
+var fileName string
+var fileTokens Tokens
+
 func main() {
-	file, err := os.Open(os.Args[1])
+	fileName = os.Args[1]
+	file, err := os.Open(fileName)
 	e(err)
 
 	contents, err := io.ReadAll(file)
 	e(err)
 
-	Run(string(contents), &globalVars, &globalFuncs)
+	fileTokens = Tokenise(string(contents))
+
+	RunTokens(fileTokens, &globalVars, &globalFuncs)
 }
 
 func RunTokens(tokens Tokens, varScope *varScope, funcScope *funcScope) any {
@@ -34,9 +40,11 @@ func RunTokens(tokens Tokens, varScope *varScope, funcScope *funcScope) any {
 			FuncDefinition(tokens.ConsumeUntilEndBlock(), varScope, funcScope)
 		case "return":
 			if varScope == &globalVars {
-				panic("Cannot use return statement at top level") // todo
+				throw("Cannot use return statement at top level", tokens)
 			}
 			return Return(tokens.ConsumeLine(), varScope, funcScope)
+		case "if":
+			IfBlock(tokens.ConsumeUntilEndBlock(), varScope, funcScope)
 		default:
 			tokens.StartCollecting()
 			name := token
@@ -45,15 +53,11 @@ func RunTokens(tokens Tokens, varScope *varScope, funcScope *funcScope) any {
 			} else if _, exists := (*funcScope)[name]; exists {
 				FuncCall(tokens.ConsumeLine(), varScope, funcScope)
 			} else {
-				panic(fmt.Sprintf("Unknown symbol '%s'", token)) // todo
+				throw(fmt.Sprintf("Unknown symbol '%s'", token), tokens)
 			}
 		}
 	}
 	return nil
-}
-
-func Run(s string, varScope *varScope, funcScope *funcScope) {
-	RunTokens(Tokenise(s), varScope, funcScope)
 }
 
 func e(err error) {

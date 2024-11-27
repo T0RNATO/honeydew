@@ -4,12 +4,15 @@ import (
 	"strings"
 )
 
-const SPLITTING_CHARS = " ;(){}'\":+*-/,"
+const SPLITTING_CHARS = " ;(){}[]'\":+*-/,"
+
+var fileLines = []int{1}
 
 type Tokens struct {
 	tokens          []string
 	index           int
 	collectionIndex int
+	fileLineIndex   int
 }
 
 func (self *Tokens) Consume() string {
@@ -26,27 +29,39 @@ func (self *Tokens) IsEmpty() bool {
 	return len(self.tokens) == self.index
 }
 
-func Tkns(tokens []string) Tokens {
-	return Tokens{tokens, 0, 0}
+func (self *Tokens) Slice(start int, end int) Tokens {
+	if end < 0 {
+		end += len(self.tokens)
+	}
+	return Tokens{self.tokens[start:end], 0, 0, self.fileLineIndex + start}
 }
 
 func (self *Tokens) StartCollecting() {
 	self.collectionIndex = self.index
 }
 
-func (self *Tokens) Collected() []string {
-	return self.tokens[self.collectionIndex:self.index]
+func (self *Tokens) Collected() Tokens {
+	return self.Slice(self.collectionIndex, self.index)
 }
 
-func (self *Tokens) CollectedMinusOne() []string {
-	return self.tokens[self.collectionIndex : self.index-1]
+func (self *Tokens) CollectedMinusOne() Tokens {
+	return self.Slice(self.collectionIndex, self.index-1)
 }
 
-func (self *Tokens) ConsumeTuple() [][]string {
-	var output [][]string
+func (self *Tokens) AssertNext(expected string) {
+	assertToken(*self, self.index, expected)
+}
+
+func (self *Tokens) AssertConsumption(expected string) {
+	self.AssertNext(expected)
+	self.Consume()
+}
+
+func (self *Tokens) ConsumeTuple() []Tokens {
+	var output []Tokens
 
 	depth := 0
-	assertToken(self.Consume(), "(")
+	self.AssertConsumption("(")
 	self.StartCollecting()
 	for {
 		token := self.Consume()
@@ -67,7 +82,7 @@ func (self *Tokens) ConsumeTuple() [][]string {
 	return output
 }
 
-func (self *Tokens) ConsumeUntilEndBlock() []string {
+func (self *Tokens) ConsumeUntilEndBlock() Tokens {
 	self.StartCollecting()
 	depth := -1
 	for {
@@ -84,8 +99,8 @@ func (self *Tokens) ConsumeUntilEndBlock() []string {
 	return self.Collected()
 }
 
-func (self *Tokens) ConsumeCurlyBrackets() []string {
-	assertToken(self.Consume(), "{")
+func (self *Tokens) ConsumeCurlyBrackets() Tokens {
+	self.AssertConsumption("{")
 	self.StartCollecting()
 	depth := 0
 	for {
@@ -102,7 +117,7 @@ func (self *Tokens) ConsumeCurlyBrackets() []string {
 	return self.CollectedMinusOne()
 }
 
-func (self *Tokens) ConsumeLine() []string {
+func (self *Tokens) ConsumeLine() Tokens {
 	self.StartCollecting()
 	for v := self.Consume(); v != ";"; v = self.Consume() {
 	}
@@ -116,6 +131,9 @@ func Tokenise(s string) Tokens {
 	in_comment := false
 
 	for _, char := range s {
+		if char == '\n' {
+			fileLines = append(fileLines, len(tokens))
+		}
 		if char == '#' {
 			in_comment = true
 			continue
@@ -140,5 +158,5 @@ func Tokenise(s string) Tokens {
 		tokens = append(tokens, chars.String())
 	}
 
-	return Tkns(tokens)
+	return Tokens{tokens, 0, 0, 0}
 }

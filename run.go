@@ -1,6 +1,10 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+	"strings"
+)
 
 type varScope = map[string]float32
 type funcScope = map[string]Function
@@ -17,30 +21,36 @@ type Arg struct {
 type UserFunction struct {
 	args []Arg
 	// returns string // todo
-	body []string
+	body Tokens
 }
 
-func (self *UserFunction) run(args []any, vScope *varScope, fScope *funcScope) any {
+func newScopeExtends(parentVars *varScope, parentFuncs *funcScope) (*varScope, *funcScope) {
 	var blockVarScope = make(varScope)
 	var blockFuncScope = make(funcScope)
 
-	if len(args) != len(self.args) {
-		panic("Incorrect number of arguments: " + string(len(args))) // todo
-	}
-
-	for k, v := range *vScope {
+	for k, v := range *parentVars {
 		blockVarScope[k] = v
 	}
 
-	for i, arg := range args {
-		blockVarScope[self.args[i].Name] = arg.(float32) // todo, temp
-	}
-
-	for k, v := range *fScope {
+	for k, v := range *parentFuncs {
 		blockFuncScope[k] = v
 	}
 
-	return RunTokens(Tkns(self.body), &blockVarScope, &blockFuncScope)
+	return &blockVarScope, &blockFuncScope
+}
+
+func (self *UserFunction) run(args []any, vScope *varScope, fScope *funcScope) any {
+	var blockVarScope, blockFuncScope = newScopeExtends(vScope, fScope)
+
+	if len(args) != len(self.args) {
+		panic("Incorrect number of arguments: " + string(len(args))) // todo, migrate to `throw`n errors
+	}
+
+	for i, arg := range args {
+		(*blockVarScope)[self.args[i].Name] = arg.(float32) // todo, temp
+	}
+
+	return RunTokens(self.body, blockVarScope, blockFuncScope)
 }
 
 type STDFunction struct {
@@ -53,36 +63,77 @@ func (self *STDFunction) run(args []any, varScope *varScope, funcScope *funcScop
 	return self.Func(args...)
 }
 
-func assertToken(t string, expected string) {
-	if t != expected {
-		panic(fmt.Sprintf("Got '%s', expected '%s'", t, expected)) // todo
+func assertToken(t Tokens, i int, expected string) {
+	if t.tokens[i] == expected {
+		return
 	}
+
+	errorLine := getFileLine(t)
+	tokensStart := fileLines[errorLine-1]
+	tokensEnd := fileLines[errorLine]
+	line := fileTokens.tokens[tokensStart:tokensEnd]
+
+	message := "Got '%s', expected '%s'\n  %s\n  %s%s"
+
+	throw(
+		fmt.Sprintf(message,
+			t.tokens[i],
+			expected,
+			magenta+strings.Join(line, " "),
+			strings.Repeat(" ", len(strings.Join(line[:i], " "))+1),
+			strings.Repeat("^", len(t.tokens[i]))+reset,
+		), t, errorLine)
 }
 
-func VarDefinition(tokens []string, varScope *varScope, funcScope *funcScope) {
-	assertToken(tokens[2], "=")
-	(*varScope)[tokens[1]] = ParseExpression(tokens[3:], varScope, funcScope)
+func getFileLine(t Tokens) int {
+	for i, line := range fileLines {
+		if line > t.fileLineIndex+t.index {
+			return i
+		}
+	}
+	return len(fileLines)
 }
-func FuncDefinition(tkns []string, varScope *varScope, funcScope *funcScope) {
-	tokens := Tkns(tkns[1:])
+
+func throw(message string, t Tokens, line ...int) {
+	var l int
+	if len(line) > 0 {
+		l = line[0]
+	} else {
+		l = getFileLine(t)
+	}
+	fmt.Print(grey)
+	fmt.Printf("[%s:%d]", fileName, l)
+	fmt.Println(red, message, reset)
+	os.Exit(1)
+}
+
+func VarDefinition(tokens Tokens, varScope *varScope, funcScope *funcScope) {
+	tokens.Consume() // "var"
 	name := tokens.Consume()
-	assertToken(tokens.tokens[1], "(")
+	tokens.AssertConsumption("=")
+	(*varScope)[name] = ParseExpression(tokens, varScope, funcScope)
+}
+func FuncDefinition(tokens Tokens, varScope *varScope, funcScope *funcScope) {
+	tokens.Consume() // "function"
+	name := tokens.Consume()
 
 	allArgTokens := tokens.ConsumeTuple()
 	var args []Arg
 
 	for _, argTokens := range allArgTokens {
-		argName := argTokens[0]
-		assertToken(argTokens[1], ":")
-		args = append(args, Arg{argName, argTokens[2]})
+		if argTokens.IsEmpty() {
+			break
+		}
+		argName := argTokens.Consume()
+		argTokens.AssertConsumption(":")
+		args = append(args, Arg{argName, argTokens.Consume()})
 	}
 
 	funcBody := tokens.ConsumeCurlyBrackets()
 
 	(*funcScope)[name] = &UserFunction{args, funcBody}
 }
-func FuncCall(tkns []string, varScope *varScope, funcScope *funcScope) any {
-	tokens := Tkns(tkns)
+func FuncCall(tokens Tokens, varScope *varScope, funcScope *funcScope) any {
 	name := tokens.Consume()
 	args := tokens.ConsumeTuple()
 
@@ -95,13 +146,24 @@ func FuncCall(tkns []string, varScope *varScope, funcScope *funcScope) any {
 		}
 		return function.run(parsedArgs, varScope, funcScope)
 	} else {
-		panic(fmt.Sprintf("Unknown symbol '%s'", name)) // todo
+		panic("unreachable")
 	}
 }
-func VarUpdate(tokens []string, varScope *varScope, funcScope *funcScope) {
-	assertToken(tokens[1], "=")
-	(*varScope)[tokens[0]] = ParseExpression(tokens[2:], varScope, funcScope)
+func VarUpdate(tokens Tokens, varScope *varScope, funcScope *funcScope) {
+	name := tokens.Consume()
+	tokens.AssertConsumption("=")
+	(*varScope)[name] = ParseExpression(tokens, varScope, funcScope)
 }
-func Return(tokens []string, varScope *varScope, funcScope *funcScope) float32 {
-	return ParseExpression(tokens[1:], varScope, funcScope)
+func Return(tokens Tokens, varScope *varScope, funcScope *funcScope) float32 {
+	return ParseExpression(tokens.Slice(1, -1), varScope, funcScope)
+}
+func IfBlock(tokens Tokens, varScope *varScope, funcScope *funcScope) {
+	tokens.Consume()
+	condition := tokens.ConsumeTuple()
+
+	if len(condition) > 1 {
+		throw("Expected only one condition in if condition", tokens)
+	} else if len(condition) == 0 {
+		throw("Expected a condition in if block", tokens)
+	}
 }
