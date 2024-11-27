@@ -11,6 +11,7 @@ var reset = "\033[0m"
 var red = "\033[31m"
 var blue = "\033[34m"
 var cyan = "\033[0;36m"
+var magenta = "\033[35m"
 
 var grey = "\033[30m"
 
